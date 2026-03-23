@@ -1,23 +1,28 @@
+import os
 from flask import Flask, jsonify, request, render_template, session, redirect
 from flask_pymongo import PyMongo
 from collections import defaultdict, deque, Counter
 from datetime import datetime
 import joblib
-import pandas as pd
 import requests
-import os
+from dotenv import load_dotenv
 
+# ==============================
+# LOAD ENV VARIABLES
+# ==============================
+load_dotenv()  # loads .env file automatically
+
+# ==============================
+# FLASK APP
+# ==============================
 app = Flask(__name__)
-app.secret_key = "super_secret_key"
-
-# ==============================
-# MongoDB Atlas
-# ==============================
 app.config["MONGO_URI"] = os.getenv("MONGO_URI")
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY")  # required for sessions
+
 mongo = PyMongo(app)
 
 # ==============================
-# Global Structures
+# GLOBAL STRUCTURES
 # ==============================
 traffic_window = defaultdict(deque)
 endpoint_window = defaultdict(lambda: defaultdict(deque))
@@ -30,7 +35,7 @@ ENDPOINT_THRESHOLD = 10
 GLOBAL_DDOS_THRESHOLD = 30
 
 # ==============================
-# LOAD MODEL + SCALER
+# LOAD ML MODEL
 # ==============================
 try:
     model = joblib.load("ddos_model.pkl")
@@ -42,7 +47,7 @@ except:
     print("⚠ ML Model not found")
 
 # ==============================
-# ATTACK TYPE MAPPING
+# ATTACK TYPES
 # ==============================
 ATTACK_TYPES = {
     0: "Normal",
@@ -52,60 +57,42 @@ ATTACK_TYPES = {
 }
 
 # ==============================
-# ML Detection
+# ML DETECTION
 # ==============================
 def detect_ml_attack(ip, request_count):
-
     if not model or not scaler:
         return None, 0
-
-    features = [[
-        request_count,
-        len(endpoint_window[ip]),
-        len(global_traffic),
-        datetime.utcnow().hour
-    ]]
-
+    features = [[request_count, len(endpoint_window[ip]), len(global_traffic), datetime.utcnow().hour]]
     features = scaler.transform(features)
-
     prediction = model.predict(features)[0]
-
-    confidence = 0
-    if hasattr(model, "predict_proba"):
-        confidence = max(model.predict_proba(features)[0])
-
+    confidence = max(model.predict_proba(features)[0]) if hasattr(model, "predict_proba") else 0
     return prediction, float(confidence)
 
 # ==============================
-# Block IP + GEO
+# BLOCK IP + GEO
 # ==============================
 def block_ip(ip, reason, ml_score=0):
-
     print(f"[ALERT] Blocking IP: {ip} | Reason: {reason}")
     blacklist.add(ip)
 
-    # System level block
+    # System-level block (optional, may need admin privileges)
     try:
         os.system(f"sudo iptables -A INPUT -s {ip} -j DROP")
     except:
         pass
 
-    # Severity
+    # Determine severity
     severity = "Low"
     if "DDoS" in reason:
         severity = "High"
-    elif "Brute" in reason or "Endpoint" in reason:
-        severity = "Medium"
-    elif "ML" in reason:
+    elif "Brute" in reason or "Endpoint" in reason or "ML" in reason:
         severity = "Medium"
 
     country = city = lat = lon = None
-
     try:
         geo = requests.get(f"https://ipinfo.io/{ip}/json", timeout=2).json()
         country = geo.get("country")
         city = geo.get("city")
-
         if "loc" in geo:
             loc = geo["loc"].split(",")
             lat = float(loc[0])
@@ -130,7 +117,7 @@ def block_ip(ip, reason, ml_score=0):
         print("MongoDB error:", e)
 
 # ==============================
-# Traffic Logging
+# LOG TRAFFIC
 # ==============================
 def log_traffic(ip, endpoint, count):
     try:
@@ -144,13 +131,11 @@ def log_traffic(ip, endpoint, count):
         print("Traffic log error:", e)
 
 # ==============================
-# Protect Admin
+# ADMIN PROTECTION
 # ==============================
 @app.before_request
 def protect_admin():
-    if request.path.startswith("/admin"):
-        if request.path == "/admin/login":
-            return
+    if request.path.startswith("/admin") and request.path != "/admin/login":
         if not session.get("admin_logged_in"):
             return redirect("/admin/login")
 
@@ -159,14 +144,12 @@ def protect_admin():
 # ==============================
 @app.before_request
 def monitor():
-
     ip = request.remote_addr
     endpoint = request.path
     now = datetime.utcnow()
 
     if endpoint.startswith("/admin"):
         return
-
     if ip in blacklist:
         return jsonify({"status": "blocked"}), 403
 
@@ -176,51 +159,38 @@ def monitor():
     request_count = len(traffic_window[ip])
     log_traffic(ip, endpoint, request_count)
 
-    # ================= ML Detection =================
+    # ML Detection
     prediction, confidence = detect_ml_attack(ip, request_count)
-
     if prediction is not None and prediction != 0:
         attack_type = ATTACK_TYPES.get(prediction, "Unknown Attack")
-
         block_ip(ip, f"ML {attack_type}", confidence)
+        return jsonify({"alert": attack_type, "confidence": confidence}), 403
 
-        return jsonify({
-            "alert": attack_type,
-            "confidence": confidence
-        }), 403
-
-    # ================= Global DDoS =================
+    # Global DDoS
     global_traffic.append(now)
-
     while global_traffic and (now - global_traffic[0]).seconds > 10:
         global_traffic.popleft()
-
     if len(global_traffic) > GLOBAL_DDOS_THRESHOLD:
         block_ip(ip, "Distributed DDoS")
         return jsonify({"alert": "Distributed DDoS"}), 403
 
-    # ================= Cleanup =================
+    # Cleanup old requests
     while traffic_window[ip] and (now - traffic_window[ip][0]).seconds > 10:
         traffic_window[ip].popleft()
-
     while endpoint_window[ip][endpoint] and (now - endpoint_window[ip][endpoint][0]).seconds > 10:
         endpoint_window[ip][endpoint].popleft()
 
-    # ================= Rule-Based =================
+    # Rule-based thresholds
     if len(traffic_window[ip]) > DDOS_THRESHOLD:
         block_ip(ip, "DDoS Attack")
         return jsonify({"alert": "ddos"}), 403
-
     if endpoint == "/login" and len(endpoint_window[ip][endpoint]) > LOGIN_THRESHOLD:
         block_ip(ip, "Login Brute Force")
         return jsonify({"alert": "bruteforce"}), 403
-
     if len(endpoint_window[ip][endpoint]) > ENDPOINT_THRESHOLD:
         block_ip(ip, f"Endpoint Flood {endpoint}")
         return jsonify({"alert": "endpoint flood"}), 403
-    print(f"IP: {ip}, Requests: {len(traffic_window[ip])}")
-    print(f"IP: {ip}")
-    print(f"Count: {len(traffic_window[ip])}")
+
 # ==============================
 # ROUTES
 # ==============================
@@ -240,9 +210,7 @@ def cart():
 def checkout():
     return jsonify({"message": "checkout page"})
 
-# ==============================
 # USER LOGIN
-# ==============================
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -251,9 +219,7 @@ def login():
         return render_template("login.html", error="Invalid credentials")
     return render_template("login.html")
 
-# ==============================
 # ADMIN
-# ==============================
 @app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     if request.method == "POST":
@@ -271,49 +237,32 @@ def admin_logout():
 def dashboard():
     return render_template("dashboard.html")
 
-# ==============================
-# APIs
-# ==============================
+# ADMIN APIs
 @app.route("/admin/live-data")
 def live_data():
-
     alerts = list(mongo.db.alerts.find())
-
     total = len(alerts)
-    ddos = brute = ml = 0
-    rule_based = 0
-    ml_based = 0
-
+    ddos = brute = ml = rule_based = ml_based = 0
     ip_counter = Counter()
     endpoint_counter = Counter()
     timeline = {}
-
     for a in alerts:
-
         t = a.get("type", "")
-
-        # ✅ ML vs Rule separation
         if "ML" in t:
             ml += 1
             ml_based += 1
         else:
             rule_based += 1
-
-        # ✅ Attack types
         if "DDoS" in t:
             ddos += 1
-
         if "Brute" in t:
             brute += 1
-
         ip_counter[a.get("ip", "unknown")] += 1
         endpoint_counter[a.get("endpoint", "/")] += 1
-
         ts = a.get("timestamp")
         if ts:
             key = str(ts)[:19]
             timeline[key] = timeline.get(key, 0) + 1
-
     return jsonify({
         "total_alerts": total,
         "ddos_attacks": ddos,
@@ -326,13 +275,11 @@ def live_data():
         "timeline": timeline,
         "ml_enabled": True
     })
-    
+
 @app.route("/admin/attack-map")
 def attack_map():
-
     alerts = list(mongo.db.alerts.find())
     locations = []
-
     for a in alerts:
         if a.get("lat") and a.get("lon"):
             locations.append({
@@ -342,11 +289,12 @@ def attack_map():
                 "type": a["type"],
                 "severity": a.get("severity", "Low")
             })
-
     return jsonify(locations)
 
 # ==============================
 # RUN
 # ==============================
 if __name__ == "__main__":
-    app.run()
+    print("Mongo URI loaded:", os.getenv("MONGO_URI"))  # Debug
+    print("Secret Key loaded:", os.getenv("SECRET_KEY"))  # Debug
+    app.run(debug=True)
