@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SecureShop - Admin Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="navbar">
+    <div><strong>🛒 SecureShop</strong></div>
+    <div>
+        <a href="/">Home</a>
+        <a href="/login">User Login</a>
+        <a href="/admin/login">Admin</a>
+    </div>
+</div>
+
+<div class="login-container">
+    <h2>Admin Login</h2>
+
+    {% if error %}
+        <p style="color:red;">{{ error }}</p>
+    {% endif %}
+
+    <form method="POST" action="/admin/login">
+        <input type="text" name="username" placeholder="Admin Username" required>
+        <input type="password" name="password" placeholder="Admin Password" required>
+        <button type="submit">Login</button>
+    </form>
+</div>
+
+<div class="footer">
+    © 2026 SecureShop | Admin Security Panel
+</div>
+
+</body>
+</html>

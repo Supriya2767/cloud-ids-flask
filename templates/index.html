@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SecureShop - Protected E-Commerce</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="navbar">
+    <div><strong>🛒 SecureShop</strong></div>
+    <div>
+    <a href="/">Home</a>
+    <a href="/login">User Login</a>
+    <a href="/admin/login">Admin</a>
+    <span id="securityStatus" class="security-indicator secure">SECURE</span>
+</div>
+</div>
+
+<div class="hero">
+    <h1>Welcome to SecureShop</h1>
+    <p>Enterprise-Level Cloud Security Enabled E-Commerce Platform</p>
+</div>
+
+<div class="products">
+    <div class="product-card">
+        <img src="https://picsum.photos/300/200?1">
+        <h3>Smartphone</h3>
+        <p>₹15,999</p>
+        <button>Add to Cart</button>
+    </div>
+
+    <div class="product-card">
+        <img src="https://picsum.photos/300/200?2">
+        <h3>Laptop</h3>
+        <p>₹55,999</p>
+        <button>Add to Cart</button>
+    </div>
+
+    <div class="product-card">
+        <img src="https://picsum.photos/300/200?3">
+        <h3>Headphones</h3>
+        <p>₹2,999</p>
+        <button>Add to Cart</button>
+    </div>
+
+    <div class="product-card">
+        <img src="https://picsum.photos/300/200?4">
+        <h3>Smart Watch</h3>
+        <p>₹7,499</p>
+        <button>Add to Cart</button>
+    </div>
+</div>
+
+<div class="footer">
+    © 2026 SecureShop | Cloud-Based Intrusion Detection & Prevention System
+</div>
+
+<script>
+let lastAlertCount = 0;
+
+async function checkAlerts() {
+    const response = await fetch('/admin/live-data');
+    const data = await response.json();
+
+    if (data.total_alerts > lastAlertCount) {
+        alert("🚨 Security Alert! Attack detected!");
+        lastAlertCount = data.total_alerts;
+    }
+}
+
+setInterval(checkAlerts, 5000);
+</script>
+
+</body>
+</html>
